@@ -20,9 +20,9 @@ import { Modal } from '../../components/ui/Modal';
 import { LanguageDropdown } from '../../components/ui/LanguageDropdown';
 import { useApp } from '../../context/AppContext';
 import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
-import { DEMO_PERSONAS, randomReply } from '../../lib/personas';
+import { DEMO_PERSONAS, getPersona, randomReply } from '../../lib/personas';
 import { getLanguage } from '../../lib/languages';
-import { translate } from '../../lib/api';
+import { generateReply, translate, type ReplyTurn } from '../../lib/api';
 import { speak, speechUnavailableReason } from '../../lib/speech';
 import { cn, colorFor, formatTime, uid as makeId } from '../../lib/utils';
 
@@ -82,6 +82,7 @@ export default function MeetingRoom() {
   const [myLang, setMyLang] = useState(state.lang || user?.preferredLanguage || 'british-english');
   const myLangMeta = getLanguage(myLang);
   const isHost = state.isHost ?? false;
+  const title = state.title || 'ASSISTRAN Meeting';
 
   const [camOn, setCamOn] = useState(state.camera ?? true);
   const [micOn, setMicOn] = useState(state.mic ?? true);
@@ -109,6 +110,11 @@ export default function MeetingRoom() {
   const screenVideoRef = useRef<HTMLVideoElement | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const feedEndRef = useRef<HTMLDivElement | null>(null);
+  // Mirrors so async/timeout handlers read the latest values, not stale closures.
+  const feedRef = useRef<Utterance[]>([]);
+  feedRef.current = feed;
+  const speakingIdRef = useRef<string | null>(null);
+  speakingIdRef.current = speakingId;
 
   const { transcript, start, stop, error: srError } = useSpeechRecognition({
     lang: myLangMeta.speechCode,
@@ -211,29 +217,54 @@ export default function MeetingRoom() {
         timestamp: Date.now(),
       },
     ]);
+
+    // A participant responds to what I just said (smart, contextual reply).
+    const responder = others[0];
+    if (responder) setTimeout(() => simulateSpeaker(responder), 900);
   }
 
   // ---- Simulated remote speaker -------------------------------------------
   async function simulateSpeaker(p: Participant) {
-    if (speakingId) return; // enforce one speaker at a time
+    if (speakingIdRef.current) return; // enforce one speaker at a time
     setSpeakingId(p.id);
-    const original = randomReply(p.id);
     const id = makeId('u_');
+
+    // Build context from the recent conversation (each line in its own language).
+    const history: ReplyTurn[] = feedRef.current
+      .slice(-6)
+      .filter((u) => u.originalText)
+      .map((u) => ({
+        role: u.speakerId === p.id ? 'assistant' : 'user',
+        content: `${u.speakerName}: ${u.originalText}`,
+      }));
+    if (history.length === 0) {
+      history.push({ role: 'user', content: `(The meeting "${title}" just started — say a brief, natural opening line.)` });
+    }
+
+    // Show a "thinking…" entry while the reply is generated and translated.
     setFeed((f) => [
       ...f,
-      {
-        id,
-        speakerId: p.id,
-        speakerName: p.name,
-        originalText: original,
-        originalLang: p.lang,
-        translatedText: '',
-        translating: true,
-        timestamp: Date.now(),
-      },
+      { id, speakerId: p.id, speakerName: p.name, originalText: '', originalLang: p.lang, translatedText: '', translating: true, timestamp: Date.now() },
     ]);
+
+    const bio = getPersona(p.id)?.bio;
+    let original: string;
+    try {
+      original = await generateReply({
+        personaName: p.name,
+        language: getLanguage(p.lang).name,
+        context: `a participant in a live video meeting titled "${title}"${bio ? `. About you: ${bio}` : ''}`,
+        messages: history,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not get a reply.');
+      original = randomReply(p.id); // graceful fallback
+    }
+
     const translated = await safeTranslate(original, p.lang, myLang);
-    setFeed((f) => f.map((u) => (u.id === id ? { ...u, translatedText: translated, translating: false } : u)));
+    setFeed((f) =>
+      f.map((u) => (u.id === id ? { ...u, originalText: original, translatedText: translated, translating: false } : u)),
+    );
     speak(translated, myLangMeta.speechCode);
     setTimeout(() => setSpeakingId((cur) => (cur === p.id ? null : cur)), 2200);
   }

@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config';
 import translateRouter from './routes/translate';
+import replyRouter from './routes/reply';
 import { listModels } from './services/ollama';
 
 const app = express();
@@ -29,6 +30,9 @@ app.get('/api/models', async (_req, res) => {
 
 // Translation API.
 app.use('/api', translateRouter);
+
+// Conversational replies for simulated chat/meeting participants.
+app.use('/api', replyRouter);
 
 // 404 for any other /api/* path.
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));

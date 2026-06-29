@@ -46,19 +46,76 @@ export function isSpeechSynthesisSupported(): boolean {
   return typeof window !== 'undefined' && 'speechSynthesis' in window;
 }
 
-/** Speak `text` aloud in the given BCP-47 language, choosing a matching voice. */
+// Voices populate asynchronously in some browsers, so cache them.
+let cachedVoices: SpeechSynthesisVoice[] = [];
+
+/** Preload TTS voices. Call once on app start. */
+export function warmUpVoices(): void {
+  if (!isSpeechSynthesisSupported()) return;
+  const load = () => {
+    const v = window.speechSynthesis.getVoices();
+    if (v.length) cachedVoices = v;
+  };
+  load();
+  window.speechSynthesis.onvoiceschanged = load;
+}
+
+function getVoices(): SpeechSynthesisVoice[] {
+  if (!isSpeechSynthesisSupported()) return [];
+  const live = window.speechSynthesis.getVoices();
+  if (live.length) cachedVoices = live;
+  return cachedVoices;
+}
+
+/**
+ * Score a voice for a language: language match plus a quality heuristic that
+ * favours modern natural/neural/Google voices and penalises robotic ones.
+ * Returns -1 when the voice is the wrong language.
+ */
+function scoreVoice(voice: SpeechSynthesisVoice, langCode: string): number {
+  const base = langCode.split('-')[0].toLowerCase();
+  const vlang = voice.lang.toLowerCase().replace('_', '-');
+  let score: number;
+  if (vlang === langCode.toLowerCase()) score = 100; // exact locale match
+  else if (vlang.startsWith(base)) score = 60; // same language, different region
+  else return -1; // wrong language
+
+  const name = voice.name.toLowerCase();
+  if (/google/.test(name)) score += 35; // Google voices are notably natural
+  if (/natural|neural|premium|enhanced|wavenet|online/.test(name)) score += 45;
+  if (/siri|eloquence|compact|espeak|pico/.test(name)) score -= 30; // robotic
+  if (!voice.localService) score += 15; // cloud voices are usually higher quality
+  if (voice.default) score += 3;
+  return score;
+}
+
+/** Pick the most natural available voice for a language, or null if none match. */
+export function pickBestVoice(langCode: string): SpeechSynthesisVoice | null {
+  let best: SpeechSynthesisVoice | null = null;
+  let bestScore = -1;
+  for (const v of getVoices()) {
+    const s = scoreVoice(v, langCode);
+    if (s > bestScore) {
+      bestScore = s;
+      best = v;
+    }
+  }
+  return bestScore >= 0 ? best : null;
+}
+
+/** Speak `text` aloud in the given BCP-47 language using the best voice found. */
 export function speak(text: string, langCode: string): void {
   if (!isSpeechSynthesisSupported() || !text.trim()) return;
   const synth = window.speechSynthesis;
   synth.cancel(); // interrupt anything currently being spoken
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = langCode;
-  utter.rate = 1;
-  utter.pitch = 1;
-  const voices = synth.getVoices();
-  const base = langCode.split('-')[0];
-  const match = voices.find((v) => v.lang === langCode) || voices.find((v) => v.lang.startsWith(base));
-  if (match) utter.voice = match;
+  // A slightly slower rate and natural pitch read more pleasantly than the
+  // browser default, which tends to sound clipped and robotic.
+  utter.rate = 0.96;
+  utter.pitch = 1.0;
+  const voice = pickBestVoice(langCode);
+  if (voice) utter.voice = voice;
   synth.speak(utter);
 }
 

@@ -8,7 +8,7 @@ import { useApp } from '../../context/AppContext';
 import { chatStore, friendsStore } from '../../lib/storage';
 import { getPersona, randomReply } from '../../lib/personas';
 import { getLanguage } from '../../lib/languages';
-import { translate } from '../../lib/api';
+import { generateReply, translate, type ReplyTurn } from '../../lib/api';
 import type { ChatMessage, Friend } from '../../types';
 import { cn, formatTime, uid as makeId } from '../../lib/utils';
 
@@ -26,6 +26,9 @@ export default function ChatScreen() {
   const [error, setError] = useState<string | null>(null);
   const [showOriginal, setShowOriginal] = useState<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  // Mirror of messages so async handlers can read the latest list.
+  const messagesRef = useRef<ChatMessage[]>([]);
+  messagesRef.current = messages;
 
   // Resolve the friend (from the saved list or a known persona).
   useEffect(() => {
@@ -69,6 +72,22 @@ export default function ChatScreen() {
     chatStore.save(myId, username, next);
   }
 
+  // Functional updates so overlapping async work never clobbers newer messages.
+  function appendMessage(msg: ChatMessage) {
+    setMessages((curr) => {
+      const next = [...curr, msg];
+      chatStore.save(myId, username, next);
+      return next;
+    });
+  }
+  function updateMessage(id: string, patch: Partial<ChatMessage>) {
+    setMessages((curr) => {
+      const next = curr.map((m) => (m.id === id ? { ...m, ...patch } : m));
+      chatStore.save(myId, username, next);
+      return next;
+    });
+  }
+
   /** Translate with a graceful fallback so the chat never hard-fails. */
   async function safeTranslate(text: string, from: string, to: string): Promise<string> {
     try {
@@ -99,43 +118,63 @@ export default function ChatScreen() {
     if (!text || !friend) return;
     setInput('');
     setError(null);
+    const fLang = getLanguage(friend.preferredLanguage);
 
     // 1) Show my message immediately (I always read my own original text).
-    const mine: ChatMessage = {
-      id: makeId('m_'),
+    const mineId = makeId('m_');
+    const prior = messagesRef.current;
+    appendMessage({
+      id: mineId,
       sender: 'me',
       originalText: text,
       originalLanguage: myLang,
-      translatedText: text, // filled in below with the friend's-language version
+      translatedText: text, // the friend's-language version is filled in below
       targetLanguage: friend.preferredLanguage,
       timestamp: Date.now(),
-    };
-    const afterMine = [...messages, mine];
-    persist(afterMine);
+    });
     logActivity({ type: 'chat', title: `Chat with ${friend.name}`, detail: text.slice(0, 60) });
 
-    // 2) Translate my message into the friend's language (what they would see).
-    const forFriend = await safeTranslate(text, myLang, friend.preferredLanguage);
-    const withTranslation = afterMine.map((m) => (m.id === mine.id ? { ...m, translatedText: forFriend } : m));
-    persist(withTranslation);
+    // 2) In the background, store the friend's-language version of my message
+    //    (their view). Non-critical, so failures stay silent.
+    void translate(text, myLang, friend.preferredLanguage)
+      .then((forFriend) => updateMessage(mineId, { translatedText: forFriend }))
+      .catch(() => undefined);
 
-    // 3) Simulate the friend replying in their language, translated back to mine.
+    // 3) Smart reply: the friend reads the whole conversation and answers in
+    //    their own language, then we translate that back into mine.
     setTyping(true);
-    const replyOriginal = randomReply(friend.username);
+    const persona = getPersona(friend.username);
+    const history: ReplyTurn[] = [
+      ...prior.map(
+        (m) => ({ role: m.sender === 'me' ? 'user' : 'assistant', content: m.originalText }) as ReplyTurn,
+      ),
+      { role: 'user', content: text },
+    ];
+
+    let replyOriginal: string;
+    try {
+      replyOriginal = await generateReply({
+        personaName: friend.name,
+        language: fLang.name,
+        context: `chatting one-on-one with a friend on a messaging app${persona?.bio ? `. About you: ${persona.bio}` : ''}`,
+        messages: history,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not get a reply.');
+      replyOriginal = randomReply(friend.username); // graceful fallback
+    }
+
     const replyForMe = await safeTranslate(replyOriginal, friend.preferredLanguage, myLang);
-    setTimeout(() => {
-      setTyping(false);
-      const reply: ChatMessage = {
-        id: makeId('m_'),
-        sender: friend.username,
-        originalText: replyOriginal,
-        originalLanguage: friend.preferredLanguage,
-        translatedText: replyForMe,
-        targetLanguage: myLang,
-        timestamp: Date.now(),
-      };
-      persist([...withTranslation, reply]);
-    }, 1100);
+    setTyping(false);
+    appendMessage({
+      id: makeId('m_'),
+      sender: friend.username,
+      originalText: replyOriginal,
+      originalLanguage: friend.preferredLanguage,
+      translatedText: replyForMe,
+      targetLanguage: myLang,
+      timestamp: Date.now(),
+    });
   }
 
   function toggleOriginal(id: string) {

@@ -8,6 +8,9 @@ import { friendsStore } from './storage';
  * round-trip translation (their language -> your language) can be demonstrated.
  */
 export interface Persona extends Friend {
+  /** Short character description used to give the AI persona flavour. */
+  bio: string;
+  /** Canned lines used only as a fallback when the AI reply endpoint fails. */
   replies: string[];
 }
 
@@ -18,6 +21,7 @@ export const DEMO_PERSONAS: Persona[] = [
     preferredLanguage: 'spanish',
     online: true,
     avatarColor: '#ec4899',
+    bio: 'a friendly product designer from Madrid who loves football, travel and good coffee',
     replies: [
       '¡Hola! ¿Cómo estás?',
       'Claro, me parece bien.',
@@ -32,6 +36,7 @@ export const DEMO_PERSONAS: Persona[] = [
     preferredLanguage: 'japanese',
     online: false,
     avatarColor: '#3b82f6',
+    bio: 'a polite software engineer from Tokyo who enjoys hiking, ramen and photography',
     replies: ['こんにちは！元気ですか？', '了解しました。', 'また後で話しましょう。', 'ありがとうございます！', 'いいですね。'],
   },
   {
@@ -40,6 +45,7 @@ export const DEMO_PERSONAS: Persona[] = [
     preferredLanguage: 'mandarin-chinese',
     online: true,
     avatarColor: '#10b981',
+    bio: 'an easy-going marketing manager from Shanghai who loves street food, movies and basketball',
     replies: ['你好！最近怎么样？', '好的，没问题。', '稍后聊。', '谢谢你的消息！', '听起来不错。'],
   },
 ];
@@ -51,6 +57,7 @@ export const REQUEST_PERSONA: Persona = {
   preferredLanguage: 'emirati-arabic',
   online: true,
   avatarColor: '#f59e0b',
+  bio: 'a warm entrepreneur from Dubai who enjoys cars, family time and trying new restaurants',
   replies: ['هلا! شخبارك؟', 'تمام، عيل زين.', 'نتواصل بعدين.', 'مشكور على الخبر!', 'حلو، يالله.'],
 };
 
