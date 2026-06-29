@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-ink-950 text-white antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+    margin: 0;
+    /* Prevent the rubber-band scroll so it feels like a native app. */
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* App-wide subtle background glow behind everything. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(circle at 15% -10%, rgba(59, 130, 246, 0.16), transparent 45%),
+      radial-gradient(circle at 90% 110%, rgba(16, 185, 129, 0.14), transparent 45%);
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+@layer components {
+  /* Frosted-glass surface used by cards, bars and modals. */
+  .glass {
+    @apply bg-white/[0.06] backdrop-blur-xl border border-white/10;
+  }
+
+  .glass-card {
+    @apply glass rounded-3xl shadow-card;
+  }
+
+  /* Primary gradient button. */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3
+      font-semibold text-white bg-brand-gradient shadow-glow
+      transition-transform active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3
+      font-semibold text-white glass transition-transform active:scale-[0.97];
+  }
+
+  .input-field {
+    @apply w-full rounded-2xl bg-ink-700/70 border border-white/10 px-4 py-3 text-white
+      placeholder-white/30 outline-none transition
+      focus:border-electric/70 focus:ring-2 focus:ring-electric/30;
+  }
+
+  .label-text {
+    @apply text-sm font-medium text-white/60 mb-1.5 block;
+  }
+
+  /* Shimmer skeleton used for the translation loading state. */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.04) 25%,
+      rgba(255, 255, 255, 0.12) 50%,
+      rgba(255, 255, 255, 0.04) 75%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded-lg;
+  }
+}
+
+/* Thin, dark custom scrollbars. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Hide scrollbars where we want a clean native feel. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
