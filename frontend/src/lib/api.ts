@@ -1,29 +1,61 @@
 import { languageName } from './languages';
 
 /**
- * Low-level translate call. Sends language *names* (e.g. "British English")
- * exactly as the backend / interpreter prompt expects.
+ * POST JSON to a backend route and parse the JSON response, turning the common
+ * failure modes into clear, actionable error messages:
+ *  - the backend is unreachable (not running / served without the API),
+ *  - a 404/405 (the app was opened without the backend behind /api),
+ *  - a structured { error } payload from our own routes.
  *
- * The frontend ALWAYS calls the backend at the relative path "/api/translate".
- * It never talks to Ollama directly — Vite proxies /api to the backend.
+ * The frontend ALWAYS uses relative "/api/*" paths; Vite (dev) or your reverse
+ * proxy (prod) forwards them to the backend. The browser never sees Ollama.
  */
-export async function apiTranslate(text: string, sourceName: string, targetName: string): Promise<string> {
-  const res = await fetch('/api/translate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, source: sourceName, target: targetName }),
-  });
-
-  let payload: { translation?: string; error?: string } = {};
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  let res: Response;
   try {
-    payload = await res.json();
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   } catch {
-    throw new Error(`Backend returned an invalid response (HTTP ${res.status}).`);
+    throw new Error(
+      'Cannot reach the ASSISTRAN backend. Make sure it is running (start everything with "npm run dev").',
+    );
+  }
+
+  const raw = await res.text();
+  let payload: { error?: string } & Record<string, unknown> = {};
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      /* response was not JSON (e.g. an HTML error page from a static host) */
+    }
   }
 
   if (!res.ok) {
-    throw new Error(payload.error || `Translation request failed (HTTP ${res.status}).`);
+    if (payload.error) throw new Error(payload.error);
+    if (res.status === 404 || res.status === 405) {
+      throw new Error(
+        `The translation API isn't reachable (HTTP ${res.status}). The app must be served with the backend running behind /api — use "npm run dev" and open http://localhost:5173, not the built files on their own.`,
+      );
+    }
+    throw new Error(`Request failed (HTTP ${res.status}).`);
   }
+  return payload as T;
+}
+
+/**
+ * Low-level translate call. Sends language *names* (e.g. "British English")
+ * exactly as the backend / interpreter prompt expects.
+ */
+export async function apiTranslate(text: string, sourceName: string, targetName: string): Promise<string> {
+  const payload = await postJson<{ translation?: string }>('/api/translate', {
+    text,
+    source: sourceName,
+    target: targetName,
+  });
   if (typeof payload.translation !== 'string') {
     throw new Error('Backend response did not include a translation.');
   }
@@ -55,19 +87,7 @@ export async function generateReply(params: {
   context: string;
   messages: ReplyTurn[];
 }): Promise<string> {
-  const res = await fetch('/api/reply', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-
-  let payload: { reply?: string; error?: string } = {};
-  try {
-    payload = await res.json();
-  } catch {
-    throw new Error(`Backend returned an invalid response (HTTP ${res.status}).`);
-  }
-  if (!res.ok) throw new Error(payload.error || `Reply request failed (HTTP ${res.status}).`);
+  const payload = await postJson<{ reply?: string }>('/api/reply', params);
   if (typeof payload.reply !== 'string') throw new Error('Backend response did not include a reply.');
   return payload.reply;
 }

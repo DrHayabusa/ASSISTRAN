@@ -104,24 +104,129 @@ export interface ChatTurn {
   content: string;
 }
 
+/** Raised when Ollama reports the requested model is not installed. */
+class ModelNotFoundError extends Error {}
+
+interface OllamaTagsResponse {
+  models?: Array<{ name?: string; model?: string }>;
+}
+
+// The model actually used for requests. Resolved lazily from the server so a
+// missing/misconfigured MODEL_NAME automatically falls back to an installed one.
+let resolvedModel: string | null = null;
+
+/** Names of every model installed on the Ollama server. */
+export async function listInstalledModels(timeoutMs = 8000): Promise<string[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${config.ollamaUrl}/api/tags`, { signal: controller.signal });
+    if (!res.ok) throw new Error(`Ollama returned HTTP ${res.status}`);
+    const data = (await res.json()) as OllamaTagsResponse;
+    return (data.models ?? []).map((m) => m.name || m.model || '').filter(Boolean);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
- * Low-level call to Ollama /api/chat (non-streamed). Returns the raw assistant
- * content. Throws a descriptive Error on any failure so callers/routes can
- * return a clean message to the client.
+ * Rank an installed model for use as a translation/chat fallback. Higher is
+ * better; a negative score means "do not use" (e.g. embedding models can't chat).
  */
-async function chatComplete(messages: ChatTurn[], options: Record<string, unknown>): Promise<string> {
+function scoreModelName(name: string): number {
+  const n = name.toLowerCase();
+  if (/embed|rerank|bge|minilm|clip|whisper|moondream|guard/.test(n)) return -1;
+  let s = 0;
+  if (/instruct|chat|-it[:@-]|-it$/.test(n)) s += 50;
+  if (/qwen2\.5|qwen3|qwen2|llama-?3|gemma\d|mistral|mixtral|aya|command-?r|phi-?[34]/.test(n)) s += 30;
+  if (/coder|code|math/.test(n)) s -= 12; // specialised models translate worse
+  const size = n.match(/(\d+(?:\.\d+)?)\s*b/); // parameter count, e.g. "32b"
+  if (size) s += Math.min(parseFloat(size[1]), 70) * 0.4;
+  return s;
+}
+
+/**
+ * Decide which model to use. Prefers the configured MODEL_NAME when it is
+ * installed; otherwise falls back to the best available chat model. Cached.
+ */
+export async function resolveModel(force = false): Promise<string> {
+  if (resolvedModel && !force) return resolvedModel;
+  const configured = config.modelName;
+
+  let installed: string[] = [];
+  try {
+    installed = await listInstalledModels();
+  } catch {
+    // Can't list (server unreachable?) — optimistically try the configured model.
+    resolvedModel = configured;
+    return configured;
+  }
+  if (installed.length === 0) {
+    resolvedModel = configured;
+    return configured;
+  }
+
+  // Exact match, then same base name (ignoring the :tag), then best fallback.
+  const base = (m: string) => m.split(':')[0];
+  const match =
+    installed.find((m) => m === configured) || installed.find((m) => base(m) === base(configured));
+  if (match) {
+    resolvedModel = match;
+    return match;
+  }
+
+  const ranked = installed
+    .map((m) => ({ m, score: scoreModelName(m) }))
+    .filter((x) => x.score >= 0)
+    .sort((a, b) => b.score - a.score);
+  if (ranked.length > 0) {
+    resolvedModel = ranked[0].m;
+    console.warn(
+      `[ollama] Model "${configured}" is not installed. Falling back to "${resolvedModel}". Installed: ${installed.join(', ')}`,
+    );
+    return resolvedModel;
+  }
+
+  resolvedModel = configured; // nothing usable — keep configured so errors name it
+  return configured;
+}
+
+/** The model currently in use (best-effort; may be the configured default). */
+export function getActiveModel(): string {
+  return resolvedModel ?? config.modelName;
+}
+
+/** Resolve the model once at startup and log the outcome. */
+export async function initModel(): Promise<void> {
+  try {
+    const model = await resolveModel(true);
+    console.log(
+      model === config.modelName
+        ? `[ollama] Using model "${model}".`
+        : `[ollama] Configured model "${config.modelName}" not found — using "${model}" instead.`,
+    );
+  } catch {
+    /* surfaced on the first request instead */
+  }
+}
+
+/** Single non-streamed chat call against a specific model. */
+async function rawChat(model: string, messages: ChatTurn[], options: Record<string, unknown>): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.ollamaTimeoutMs);
   try {
     const response = await fetch(`${config.ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: config.modelName, messages, stream: false, options }),
+      body: JSON.stringify({ model, messages, stream: false, options }),
       signal: controller.signal,
     });
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
+      if (response.status === 404 && /not found/i.test(body)) {
+        throw new ModelNotFoundError(`model '${model}' not found`);
+      }
       throw new Error(`Ollama returned HTTP ${response.status}. ${body}`.trim());
     }
 
@@ -137,6 +242,29 @@ async function chatComplete(messages: ChatTurn[], options: Record<string, unknow
     throw err;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+/**
+ * Chat completion with automatic model resolution. If the chosen model turns
+ * out to be missing, it re-checks the server once and retries with a fallback;
+ * otherwise it throws a clear, actionable error.
+ */
+async function chatComplete(messages: ChatTurn[], options: Record<string, unknown>): Promise<string> {
+  const model = await resolveModel();
+  try {
+    return await rawChat(model, messages, options);
+  } catch (err) {
+    if (!(err instanceof ModelNotFoundError)) throw err;
+    // The cached/configured model is gone — re-resolve against the live server.
+    const installed = await listInstalledModels().catch(() => [] as string[]);
+    const next = await resolveModel(true);
+    if (next !== model) return await rawChat(next, messages, options);
+    throw new Error(
+      installed.length
+        ? `Model "${config.modelName}" is not installed on the Ollama server. Installed: ${installed.join(', ')}. Set MODEL_NAME in .env to one of these (or run "ollama pull ${config.modelName}").`
+        : `No models are installed on the Ollama server at ${config.ollamaUrl}. Pull one first, e.g. "ollama pull qwen2.5:14b-instruct", then set MODEL_NAME in .env.`,
+    );
   }
 }
 

@@ -161,11 +161,82 @@ Expected:
 { "reply": "..." }
 ```
 
-**Backend health / diagnostics:**
+**Backend health / diagnostics** — the single most useful check:
 ```bash
-curl http://localhost:3000/api/health     # { "status": "ok", ... }
-curl http://localhost:3000/api/models     # proxies Ollama /api/tags through the backend
+curl http://localhost:3000/api/health
 ```
+```jsonc
+{
+  "status": "ok",
+  "ollamaReachable": true,            // can the backend reach your Ollama server?
+  "configuredModel": "qwen2.5-coder:32b",
+  "activeModel": "qwen2.5:14b-instruct", // the model actually being used
+  "installedModels": ["qwen2.5:14b-instruct", "..."]  // what your server has
+}
+```
+If `ollamaReachable` is `false`, the backend can't reach Ollama (URL/firewall/VPN). If
+`installedModels` is empty or your model isn't listed, pull one or set `MODEL_NAME`.
+
+---
+
+## 👥 Share it with a friend
+
+Translation needs an Ollama server with a chat model, so the only real requirement is that whoever
+runs the app can **reach a working Ollama**. The cleanest, error-free way for a friend to try it:
+
+### Option A — friend runs everything on their own machine (recommended)
+1. Install **Node 18+** and **[Ollama](https://ollama.com)**.
+2. Pull a model and start Ollama:
+   ```bash
+   ollama pull qwen2.5:14b-instruct   # good quality/speed; or qwen2.5:7b-instruct for low-end PCs
+   ollama serve                       # (usually already running on http://localhost:11434)
+   ```
+3. Clone and configure:
+   ```bash
+   git clone https://github.com/DrHayabusa/ASSISTRAN.git
+   cd ASSISTRAN
+   cp .env.example .env
+   ```
+   Edit `.env` so it points at their **own** Ollama:
+   ```env
+   OLLAMA_URL=http://localhost:11434
+   MODEL_NAME=qwen2.5:14b-instruct
+   ```
+4. Run it:
+   ```bash
+   npm install
+   npm run dev
+   ```
+5. Open **http://localhost:5173** (Chrome/Edge for the microphone).
+
+This "just works" with no 404/405/500/502 because everything is local. Mic/camera also work because
+`localhost` is a secure origin.
+
+### Option B — friend uses *your* shared Ollama server
+Keep `OLLAMA_URL` pointing at your server (e.g. `http://46.152.253.223:11434`). For this to work:
+- Your Ollama server must be **reachable from the friend's network** (public IP/port, port-forwarded,
+  or a tunnel like `ngrok http 11434`). Verify from *their* machine: `curl http://YOUR_IP:11434/api/tags`.
+- That server must have a **chat model installed** (run `ollama pull qwen2.5:14b-instruct` on it). The
+  app auto-falls-back to any installed chat model, but it must have at least one.
+
+> Mic/camera need a secure origin. Each person running their own copy on `localhost` is fine. If you
+> instead expose one instance over a LAN IP (`npm run dev -- --host`), the mic/camera are blocked
+> unless it's served over HTTPS (use a tunnel such as `cloudflared`/`ngrok`).
+
+---
+
+## 🛠️ Troubleshooting (404 / 405 / 500 / 502)
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `model '...' not found` (404) | The model in `MODEL_NAME` isn't installed on the Ollama server | `ollama pull <model>` on that server, or set `MODEL_NAME` to one from `installedModels`. The app now **auto-falls-back** to an installed chat model. |
+| "The translation API isn't reachable" (**404/405**) | The frontend is served **without the backend** behind `/api` (e.g. only `vite`, or static `dist/` on a host with no API) | Run **both** servers with `npm run dev`; open `http://localhost:5173`. |
+| "Cannot reach the ASSISTRAN backend" / **500** | Backend isn't running, or crashed, or wrong port | Start it (`npm run dev`); check the backend terminal; confirm `curl http://localhost:3000/api/health`. |
+| `Translation failed: ... timed out` (**502**) | Backend is up but can't reach Ollama (URL wrong, firewall, VPN, server down) | Check `OLLAMA_URL`; from the backend machine run `curl $OLLAMA_URL/api/tags`. |
+| Translations are poor | `qwen2.5-coder:32b` is code-tuned | Set `MODEL_NAME` to a general instruct model (see the tip above). |
+
+**Golden rule:** if you see a 404/405 on `/api/...`, the backend isn't there — never serve the frontend
+without it. Always check `GET /api/health` first.
 
 ---
 

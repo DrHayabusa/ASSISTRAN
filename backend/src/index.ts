@@ -3,7 +3,7 @@ import cors from 'cors';
 import { config } from './config';
 import translateRouter from './routes/translate';
 import replyRouter from './routes/reply';
-import { listModels } from './services/ollama';
+import { getActiveModel, initModel, listInstalledModels, listModels } from './services/ollama';
 
 const app = express();
 
@@ -12,9 +12,26 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-// Lightweight liveness check.
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', model: config.modelName, ollamaUrl: config.ollamaUrl });
+// Liveness + setup check. Confirms the backend is up, whether it can reach the
+// Ollama server, and which model will actually be used — handy for friends
+// verifying their setup.
+app.get('/api/health', async (_req, res) => {
+  let ollamaReachable = false;
+  let installedModels: string[] = [];
+  try {
+    installedModels = await listInstalledModels(3000); // keep health fast
+    ollamaReachable = true;
+  } catch {
+    ollamaReachable = false;
+  }
+  res.json({
+    status: 'ok',
+    ollamaUrl: config.ollamaUrl,
+    ollamaReachable,
+    configuredModel: config.modelName,
+    activeModel: getActiveModel(),
+    installedModels,
+  });
 });
 
 // Diagnostic route: confirms the backend can reach Ollama and lists models.
@@ -41,5 +58,7 @@ app.listen(config.port, () => {
   console.log(`\n  ASSISTRAN backend running at http://localhost:${config.port}`);
   console.log(`  Translate endpoint:  POST http://localhost:${config.port}/api/translate`);
   console.log(`  Ollama target:       ${config.ollamaUrl}`);
-  console.log(`  Model:               ${config.modelName}\n`);
+  console.log(`  Configured model:    ${config.modelName}`);
+  // Check the Ollama server and pick a usable model (logs a fallback if needed).
+  void initModel();
 });
