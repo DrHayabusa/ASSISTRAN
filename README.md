@@ -194,12 +194,27 @@ ASSISTRAN/
 
 ---
 
+## 🎙️ Microphone / voice troubleshooting
+
+Voice input uses the browser **Web Speech API**, which has three hard requirements. If the mic
+doesn't work, the app now shows the exact reason on screen — it's almost always one of these:
+
+1. **Browser:** use **Google Chrome** or **Microsoft Edge**. Firefox, Safari, and Brave do not
+   support speech recognition reliably (Brave blocks it by default).
+2. **Secure origin:** open the app at **`http://localhost:5173`**. Browsers **block the microphone on
+   a plain LAN/IP address** (e.g. `http://192.168.1.50:5173`), so opening it on your phone over the
+   network will fail until you serve it over **HTTPS** (e.g. via a tunnel like `ngrok`/`cloudflared`,
+   or a self-signed cert).
+3. **Permission + connection:** allow the microphone when prompted (check the lock/camera icon in the
+   address bar if you dismissed it), and stay online — Chrome processes speech via an online service.
+
+Typing always works as a fallback, so you can use every feature without a mic. Text-to-speech
+(reading translations aloud) and camera/screen-share have the same secure-origin requirement.
+
 ## 🔒 Notes
 - **Local testing only:** authentication is intentionally simple and passwords are stored in plain
   text in `localStorage`. Do **not** use this auth as-is in production.
 - The Ollama URL/model live in the backend env only — they are never bundled into the frontend.
-- Microphone speech recognition is best supported in Chromium browsers (Chrome/Edge). The app falls
-  back to typed input where it isn't available.
 
 ---
 

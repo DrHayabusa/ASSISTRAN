@@ -23,7 +23,7 @@ import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
 import { DEMO_PERSONAS, randomReply } from '../../lib/personas';
 import { getLanguage } from '../../lib/languages';
 import { translate } from '../../lib/api';
-import { speak } from '../../lib/speech';
+import { speak, speechUnavailableReason } from '../../lib/speech';
 import { cn, colorFor, formatTime, uid as makeId } from '../../lib/utils';
 
 interface RoomState {
@@ -110,12 +110,17 @@ export default function MeetingRoom() {
   const screenStreamRef = useRef<MediaStream | null>(null);
   const feedEndRef = useRef<HTMLDivElement | null>(null);
 
-  const { supported, transcript, start, stop } = useSpeechRecognition({
+  const { transcript, start, stop, error: srError } = useSpeechRecognition({
     lang: myLangMeta.speechCode,
     continuous: true,
   });
   const transcriptRef = useRef('');
   transcriptRef.current = transcript;
+
+  // Surface microphone/recognition problems in the room's error banner.
+  useEffect(() => {
+    if (srError) setError(srError);
+  }, [srError]);
 
   // Log the join once.
   useEffect(() => {
@@ -177,9 +182,10 @@ export default function MeetingRoom() {
 
   // ---- Push-to-talk (me) --------------------------------------------------
   function startTalking() {
-    if (!micOn) return setError('Your microphone is off.');
+    if (!micOn) return setError('Your microphone is off — turn it on in the controls below.');
     if (speakingId && speakingId !== 'me') return; // someone else has the floor
-    if (!supported) return setError('Speech recognition is not supported in this browser.');
+    const reason = speechUnavailableReason();
+    if (reason) return setError(reason);
     setError(null);
     setSpeakingId('me');
     start();

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  describeSpeechError,
   getSpeechRecognitionCtor,
   isSpeechRecognitionSupported,
   type SpeechRecognitionInstance,
@@ -42,8 +43,9 @@ export function useSpeechRecognition({ lang, continuous = true }: Options) {
       setError(null);
     };
     recognition.onerror = (e) => {
-      // "no-speech" / "aborted" are routine; surface only meaningful errors.
-      if (e.error !== 'no-speech' && e.error !== 'aborted') setError(e.error);
+      // "no-speech" / "aborted" are routine; surface only meaningful errors,
+      // mapped to clear, actionable messages.
+      if (e.error !== 'no-speech' && e.error !== 'aborted') setError(describeSpeechError(e.error));
     };
     recognition.onend = () => setListening(false);
     recognition.onresult = (event) => {

@@ -7,7 +7,7 @@ import { useApp } from '../context/AppContext';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { translate } from '../lib/api';
 import { getLanguage, LANGUAGES } from '../lib/languages';
-import { speak } from '../lib/speech';
+import { ensureMicPermission, speak, speechUnavailableReason } from '../lib/speech';
 import { translationsStore } from '../lib/storage';
 import type { TranslationRecord } from '../types';
 import { cn, formatTime } from '../lib/utils';
@@ -32,10 +32,12 @@ export default function Translate() {
   const srcMeta = getLanguage(sourceLang);
   const tgtMeta = getLanguage(targetLang);
 
-  const { supported, listening, transcript, error: srError, start, stop } = useSpeechRecognition({
+  const { listening, transcript, error: srError, start, stop } = useSpeechRecognition({
     lang: srcMeta.speechCode,
     continuous: true,
   });
+  // Non-null when voice input can't be used here (browser / insecure origin).
+  const voiceBlocked = speechUnavailableReason();
 
   // Mirror the live transcript into the editable source box while listening.
   useEffect(() => {
@@ -75,20 +77,28 @@ export default function Translate() {
     }
   }
 
-  function toggleMic() {
-    if (!supported) {
-      setError('Speech recognition is not supported in this browser. Please type instead.');
+  async function toggleMic() {
+    // Explain precisely why voice is unavailable (unsupported browser / insecure origin).
+    const reason = speechUnavailableReason();
+    if (reason) {
+      setError(reason);
       return;
     }
     if (listening) {
       stop();
       // Give the recognizer a beat to flush the final result, then translate.
       setTimeout(() => runTranslation(sourceRef.current), 350);
-    } else {
-      setResult('');
-      setError(null);
-      start();
+      return;
     }
+    setResult('');
+    setError(null);
+    // Trigger a reliable permission prompt and report a clear error on denial.
+    const perm = await ensureMicPermission();
+    if (!perm.ok) {
+      setError(perm.error ?? 'Microphone unavailable.');
+      return;
+    }
+    start();
   }
 
   function swap() {
@@ -199,12 +209,17 @@ export default function Translate() {
             </span>
           </button>
           <p className="mt-3 text-xs text-white/40">
-            {!supported
-              ? 'Voice input not available — type above'
+            {voiceBlocked
+              ? 'Voice input unavailable — type above'
               : listening
                 ? 'Tap to stop & translate'
                 : 'Tap to speak'}
           </p>
+          {voiceBlocked && (
+            <p className="mt-2 max-w-xs text-center text-[11px] leading-relaxed text-amber-200/70">
+              {voiceBlocked}
+            </p>
+          )}
         </div>
 
         {/* History panel */}
