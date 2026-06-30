@@ -12,6 +12,7 @@ import { getActiveModel, initModel, listInstalledModels, listModels } from './se
 import { pingDb } from './db/pool';
 import { migrate } from './db/migrate';
 import { initRealtime } from './realtime/socket';
+import { attachRedisAdapter } from './realtime/redis';
 
 const app = express();
 
@@ -69,17 +70,36 @@ if (fs.existsSync(distDir)) {
 }
 
 const server = http.createServer(app);
-initRealtime(server); // attach Socket.IO to the same HTTP server
+const io = initRealtime(server); // attach Socket.IO to the same HTTP server
+
+// Connect + migrate with retries, in the background, so we don't block startup
+// and tolerate MariaDB coming up slightly after the app (e.g. under supervisord).
+async function initDb(): Promise<void> {
+  const attempts = Number(process.env.DB_INIT_RETRIES) || 20;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await pingDb();
+      await migrate();
+      console.log('[db] connected and schema ready');
+      return;
+    } catch (e) {
+      if (i === attempts) {
+        console.error(`[db] NOT available after ${attempts} attempts: ${(e as Error).message}`);
+        console.error('     Auth and meetings need MariaDB. Translation still works without it.');
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
 
 async function start() {
+  void initDb();
+
   try {
-    await pingDb();
-    await migrate();
-    console.log('[db] connected and schema ready');
+    if (await attachRedisAdapter(io)) console.log('[redis] Socket.IO adapter attached');
   } catch (e) {
-    console.error(`[db] NOT available: ${(e as Error).message}`);
-    console.error('     Auth and meetings require MariaDB — set DB_* in .env and start the database.');
-    console.error('     Translation (/api/translate) still works without it.');
+    console.warn(`[redis] adapter not attached (${(e as Error).message}) — using in-memory.`);
   }
 
   if (config.jwtSecret === 'dev-insecure-change-me') {

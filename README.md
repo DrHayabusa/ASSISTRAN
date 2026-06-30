@@ -22,7 +22,9 @@ Backend (Node + Express + TS) ── MariaDB (users, meetings, chat)
 > **Real multi-user mode (v2).** Accounts and meetings are now **server-backed** (MariaDB), so the
 > same meeting code puts everyone in **one shared room** — with live translated transcript/chat over
 > Socket.IO and audio/video over a LiveKit SFU. This needs MariaDB (always) and LiveKit (for A/V).
-> **To deploy it for real (on-prem, public IP, self-signed HTTPS), follow [`deploy/DEPLOY.md`](deploy/DEPLOY.md).**
+> **Deploy options:** a **single all-in-one Ubuntu container** (FE+BE+MariaDB+Redis in one image;
+> Ollama/LiveKit external) — see [`deploy/allinone/README.md`](deploy/allinone/README.md); or the
+> **multi-service stack** with LiveKit + self-signed HTTPS — see [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
 > Without LiveKit configured, meetings still work for translated transcript + chat (A/V just off).
 
 ---

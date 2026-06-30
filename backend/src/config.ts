@@ -31,6 +31,9 @@ export const config = {
     connectionLimit: Number(process.env.DB_POOL) || 10,
   },
 
+  // ---- Redis (Socket.IO adapter / scaling) ----
+  redisUrl: process.env.REDIS_URL || '',
+
   // ---- Auth ----
   jwtSecret: process.env.JWT_SECRET || 'dev-insecure-change-me',
   jwtExpiresInSec: Number(process.env.JWT_EXPIRES_SEC) || 60 * 60 * 24 * 7, // 7 days
