@@ -11,13 +11,19 @@ Ollama directly — it calls the backend, and only the backend calls Ollama.
 
 ```text
 Browser / Mobile Web UI
-        │   fetch('/api/translate')   (relative URL, proxied by Vite)
+        │   /api/*  +  /socket.io   (same origin; Vite proxies in dev)
         ▼
-Backend API:  POST /api/translate     (Node + Express + TypeScript)
-        │   POST {OLLAMA_URL}/api/chat
-        ▼
-Ollama Server  →  Model: qwen2.5-coder:32b
+Backend (Node + Express + TS) ── MariaDB (users, meetings, chat)
+        ├── POST {OLLAMA_URL}/api/chat   →  Ollama (translation)
+        ├── Socket.IO realtime room      →  shared meeting (presence, chat, transcripts, floor)
+        └── mints LiveKit tokens         →  LiveKit SFU + TURN (audio/video, up to 50)
 ```
+
+> **Real multi-user mode (v2).** Accounts and meetings are now **server-backed** (MariaDB), so the
+> same meeting code puts everyone in **one shared room** — with live translated transcript/chat over
+> Socket.IO and audio/video over a LiveKit SFU. This needs MariaDB (always) and LiveKit (for A/V).
+> **To deploy it for real (on-prem, public IP, self-signed HTTPS), follow [`deploy/DEPLOY.md`](deploy/DEPLOY.md).**
+> Without LiveKit configured, meetings still work for translated transcript + chat (A/V just off).
 
 ---
 
@@ -59,9 +65,22 @@ Ollama Server  →  Model: qwen2.5-coder:32b
 
 ## 🚀 Getting started
 
+> **Deploying for real users?** Skip this section and use **[`deploy/DEPLOY.md`](deploy/DEPLOY.md)**
+> (Docker Compose: MariaDB + LiveKit + app + HTTPS). The steps below are for local development.
+
 ### Prerequisites
 - **Node.js 18+** (tested on Node 22) and npm.
-- Network access to your Ollama server with the `qwen2.5-coder:32b` model pulled.
+- Network access to an **Ollama** server with a chat model pulled (e.g. `qwen2.5:14b-instruct`).
+- A **MariaDB** (or MySQL) database — accounts and meetings are server-backed. Quick start:
+  ```bash
+  docker run -d --name assistran-db -p 3306:3306 \
+    -e MARIADB_DATABASE=assistran -e MARIADB_USER=assistran \
+    -e MARIADB_PASSWORD=assistran -e MARIADB_ROOT_PASSWORD=root \
+    mariadb:11.4
+  ```
+  The backend creates its tables automatically on startup.
+- **LiveKit** is optional for local dev — without it, meetings run with translated transcript + chat
+  but no audio/video.
 
 ### 1. Install
 ```bash
@@ -73,15 +92,26 @@ This installs both the `backend` and `frontend` workspaces in one step.
 ```bash
 cp .env.example .env
 ```
-`.env` (read by the **backend only**):
+`.env` (read by the **backend only**) — key settings:
 ```env
 OLLAMA_URL=http://46.152.253.223:11434
-MODEL_NAME=qwen2.5-coder:32b
-PORT=3000
-OLLAMA_TIMEOUT_MS=60000
+MODEL_NAME=qwen2.5:14b-instruct
+
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=assistran
+DB_PASSWORD=assistran
+DB_NAME=assistran
+
+JWT_SECRET=change-me-to-a-long-random-string
+
+# Optional — enables in-meeting audio/video (see deploy/DEPLOY.md):
+LIVEKIT_URL=
+LIVEKIT_API_KEY=
+LIVEKIT_API_SECRET=
 ```
-> These same values are baked in as defaults, so the app still runs without a `.env` — but copying
-> the file makes them easy to change.
+See `.env.example` for the full list. Ollama/DB have sensible localhost defaults; **set `JWT_SECRET`
+before exposing the server.**
 
 > **Tip — translation quality:** `qwen2.5-coder:32b` is tuned for *code*, so general/dialect
 > translation can be hit-or-miss. For noticeably better, more natural translations, point

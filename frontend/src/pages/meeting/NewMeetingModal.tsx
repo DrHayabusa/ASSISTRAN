@@ -1,15 +1,14 @@
-import { Calendar, Check, Copy, Link2, Play, Video } from 'lucide-react';
+import { AlertCircle, Calendar, Check, Copy, Link2, Play, Video } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal } from '../../components/ui/Modal';
 import { useApp } from '../../context/AppContext';
-import { meetingsStore } from '../../lib/storage';
-import { makeMeetingCode, uid } from '../../lib/utils';
+import { meetingApi } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 type Mode = 'now' | 'schedule';
 
-/** Modal for creating an instant meeting or scheduling one for later. */
+/** Modal for creating an instant meeting or scheduling one for later (server-backed). */
 export default function NewMeetingModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const { user, logActivity } = useApp();
@@ -18,6 +17,8 @@ export default function NewMeetingModal({ open, onClose }: { open: boolean; onCl
   const [when, setWhen] = useState('');
   const [code, setCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const link = code ? `${window.location.origin}/meeting/${code}/setup` : '';
 
@@ -27,6 +28,7 @@ export default function NewMeetingModal({ open, onClose }: { open: boolean; onCl
     setWhen('');
     setCode(null);
     setCopied(false);
+    setError(null);
   }
 
   function close() {
@@ -34,24 +36,28 @@ export default function NewMeetingModal({ open, onClose }: { open: boolean; onCl
     onClose();
   }
 
-  function create() {
+  async function create() {
     if (!user) return;
-    const meetingTitle = title.trim() || 'ASSISTRAN Meeting';
-    const newCode = makeMeetingCode();
-    meetingsStore.add(user.id, {
-      id: uid('mtg_'),
-      code: newCode,
-      title: meetingTitle,
-      scheduledFor: mode === 'schedule' && when ? new Date(when).getTime() : undefined,
-      createdBy: user.username,
-      createdAt: Date.now(),
-    });
-    logActivity({
-      type: 'meeting_created',
-      title: meetingTitle,
-      detail: mode === 'schedule' && when ? `Scheduled · ${new Date(when).toLocaleString()}` : `Code ${newCode}`,
-    });
-    setCode(newCode);
+    setError(null);
+    setBusy(true);
+    try {
+      const meetingTitle = title.trim() || 'ASSISTRAN Meeting';
+      const { meeting } = await meetingApi.create({
+        title: meetingTitle,
+        scheduledFor: mode === 'schedule' && when ? new Date(when).getTime() : null,
+      });
+      logActivity({
+        type: 'meeting_created',
+        title: meeting.title,
+        detail:
+          mode === 'schedule' && when ? `Scheduled · ${new Date(when).toLocaleString()}` : `Code ${meeting.code}`,
+      });
+      setCode(meeting.code);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not create the meeting.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function copy() {
@@ -62,16 +68,14 @@ export default function NewMeetingModal({ open, onClose }: { open: boolean; onCl
 
   function start() {
     if (!code) return;
-    const meetingTitle = title.trim() || 'ASSISTRAN Meeting';
     close();
-    navigate(`/meeting/${code}/setup`, { state: { title: meetingTitle, isHost: true } });
+    navigate(`/meeting/${code}/setup`, { state: { title: title.trim() || 'ASSISTRAN Meeting' } });
   }
 
   return (
     <Modal open={open} onClose={close} title="New Meeting">
       {!code ? (
         <>
-          {/* Mode tabs */}
           <div className="mb-4 flex rounded-2xl bg-ink-700/70 p-1">
             {(
               [
@@ -114,8 +118,15 @@ export default function NewMeetingModal({ open, onClose }: { open: boolean; onCl
             </label>
           )}
 
-          <button onClick={create} className="btn-primary mt-2 w-full">
-            <Link2 size={18} /> {mode === 'schedule' ? 'Schedule & get link' : 'Create meeting'}
+          {error && (
+            <div className="mb-3 flex items-center gap-2 rounded-xl bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
+              <AlertCircle size={16} className="shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <button onClick={create} disabled={busy} className="btn-primary mt-2 w-full">
+            <Link2 size={18} /> {busy ? 'Creating…' : mode === 'schedule' ? 'Schedule & get link' : 'Create meeting'}
           </button>
         </>
       ) : (

@@ -1,0 +1,26 @@
+# LiveKit SFU configuration.
+# IMPORTANT: the key/secret below MUST match LIVEKIT_API_KEY / LIVEKIT_API_SECRET
+# in ../.env  (here LIVEKIT_API_KEY=assistran_key).
+
+port: 7880
+bind_addresses:
+  - '0.0.0.0'
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # Advertise the server's public IP for ICE so remote participants can connect.
+  use_external_ip: true
+
+# Embedded TURN (UDP). Needed when participants are behind strict NATs/firewalls.
+turn:
+  enabled: true
+  udp_port: 3478
+
+keys:
+  # key: secret  — replace the secret with a long random string and mirror it in .env
+  assistran_key: REPLACE_WITH_A_LONG_RANDOM_LIVEKIT_SECRET
+
+logging:
+  level: info

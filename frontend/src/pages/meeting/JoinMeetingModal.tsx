@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal } from '../../components/ui/Modal';
 import { useApp } from '../../context/AppContext';
+import { meetingApi } from '../../lib/api';
 
 /** Modal for joining an existing meeting by code or pasted link. */
 export default function JoinMeetingModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -11,6 +12,7 @@ export default function JoinMeetingModal({ open, onClose }: { open: boolean; onC
   const [codeInput, setCodeInput] = useState('');
   const [name, setName] = useState(user?.name ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   /** Accept either a raw code ("ABCD-1234") or a full meeting link. */
   function normalizeCode(input: string): string | null {
@@ -21,13 +23,21 @@ export default function JoinMeetingModal({ open, onClose }: { open: boolean; onC
     return raw.toUpperCase().replace(/\s+/g, '');
   }
 
-  function join() {
+  async function join() {
     setError(null);
     const code = normalizeCode(codeInput);
     if (!code) return setError('Please enter a meeting code or link.');
     if (!name.trim()) return setError('Please enter your name.');
-    onClose();
-    navigate(`/meeting/${code}/setup`, { state: { title: 'ASSISTRAN Meeting', isHost: false, name } });
+    setBusy(true);
+    try {
+      const { meeting } = await meetingApi.get(code);
+      onClose();
+      navigate(`/meeting/${meeting.code}/setup`, { state: { title: meeting.title, name } });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not find that meeting.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -55,8 +65,8 @@ export default function JoinMeetingModal({ open, onClose }: { open: boolean; onC
 
       {error && <p className="mb-2 text-sm text-red-300">{error}</p>}
 
-      <button onClick={join} className="btn-primary mt-1 w-full">
-        <LogIn size={18} /> Join
+      <button onClick={join} disabled={busy} className="btn-primary mt-1 w-full">
+        <LogIn size={18} /> {busy ? 'Checking…' : 'Join'}
       </button>
     </Modal>
   );

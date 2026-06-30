@@ -7,136 +7,124 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { HistoryItem, User } from '../types';
-import { historyStore, purgeUserData, sessionStore, usersStore } from '../lib/storage';
-import { uid } from '../lib/utils';
+import type { HistoryItem } from '../types';
+import { historyStore } from '../lib/storage';
+import { authApi, clearToken, getToken, setToken, type PublicUser } from '../lib/api';
 
 interface SignupInput {
   name: string;
   username: string;
   password: string;
 }
+type Result = { ok: boolean; error?: string };
 
 interface AppContextValue {
-  user: User | null;
+  user: PublicUser | null;
   ready: boolean;
-  login: (username: string, password: string) => { ok: boolean; error?: string };
-  signup: (input: SignupInput) => { ok: boolean; error?: string };
+  login: (username: string, password: string) => Promise<Result>;
+  signup: (input: SignupInput) => Promise<Result>;
   logout: () => void;
-  deleteAccount: () => void;
+  deleteAccount: () => Promise<void>;
   setPreferredLanguage: (langId: string) => void;
-  updateProfile: (patch: Partial<Pick<User, 'name' | 'username'>>) => { ok: boolean; error?: string };
-  changePassword: (current: string, next: string) => { ok: boolean; error?: string };
+  updateProfile: (patch: { name?: string; username?: string }) => Promise<Result>;
+  changePassword: (current: string, next: string) => Promise<Result>;
   logActivity: (item: Omit<HistoryItem, 'id' | 'timestamp'>) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+function errMsg(e: unknown, fallback: string): string {
+  return e instanceof Error ? e.message : fallback;
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<PublicUser | null>(null);
   const [ready, setReady] = useState(false);
 
-  // Restore the session on first load.
+  // Restore the session from a stored JWT.
   useEffect(() => {
-    const id = sessionStore.get();
-    if (id) {
-      const found = usersStore.all().find((u) => u.id === id);
-      if (found) setUser(found);
-    }
-    setReady(true);
-  }, []);
-
-  const login = useCallback((username: string, password: string) => {
-    const found = usersStore.findByUsername(username.trim());
-    if (!found) return { ok: false, error: 'No account found with that username.' };
-    if (found.password !== password) return { ok: false, error: 'Incorrect password.' };
-    sessionStore.set(found.id);
-    setUser(found);
-    return { ok: true };
-  }, []);
-
-  const signup = useCallback(({ name, username, password }: SignupInput) => {
-    const cleanName = name.trim();
-    const cleanUser = username.trim();
-    if (!cleanName || !cleanUser || !password) return { ok: false, error: 'All fields are required.' };
-    if (usersStore.findByUsername(cleanUser)) {
-      return { ok: false, error: 'That username is already taken.' };
-    }
-    const newUser: User = {
-      id: uid('u_'),
-      name: cleanName,
-      username: cleanUser,
-      password,
-      preferredLanguage: '', // chosen on the next screen
-      createdAt: Date.now(),
+    let active = true;
+    (async () => {
+      if (getToken()) {
+        try {
+          const { user } = await authApi.me();
+          if (active) setUser(user);
+        } catch {
+          clearToken(); // expired/invalid
+        }
+      }
+      if (active) setReady(true);
+    })();
+    return () => {
+      active = false;
     };
-    usersStore.add(newUser);
-    sessionStore.set(newUser.id);
-    setUser(newUser);
-    return { ok: true };
+  }, []);
+
+  const login = useCallback(async (username: string, password: string): Promise<Result> => {
+    try {
+      const { token, user } = await authApi.login({ username, password });
+      setToken(token);
+      setUser(user);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: errMsg(e, 'Login failed.') };
+    }
+  }, []);
+
+  const signup = useCallback(async ({ name, username, password }: SignupInput): Promise<Result> => {
+    try {
+      const { token, user } = await authApi.signup({ name, username, password });
+      setToken(token);
+      setUser(user);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: errMsg(e, 'Could not create account.') };
+    }
   }, []);
 
   const logout = useCallback(() => {
-    sessionStore.clear();
+    clearToken();
     setUser(null);
   }, []);
 
-  const deleteAccount = useCallback(() => {
-    if (!user) return;
-    purgeUserData(user.id);
-    usersStore.remove(user.id);
-    sessionStore.clear();
+  const deleteAccount = useCallback(async () => {
+    try {
+      await authApi.deleteAccount();
+    } catch {
+      /* best effort */
+    }
+    clearToken();
     setUser(null);
-  }, [user]);
-
-  // Persist a partial change to the current user.
-  const persist = useCallback((next: User) => {
-    usersStore.update(next);
-    setUser(next);
   }, []);
 
-  const setPreferredLanguage = useCallback(
-    (langId: string) => {
-      if (!user) return;
-      persist({ ...user, preferredLanguage: langId });
-    },
-    [user, persist],
-  );
+  // Optimistic local update + persist to the server.
+  const setPreferredLanguage = useCallback((langId: string) => {
+    setUser((u) => (u ? { ...u, preferredLanguage: langId } : u));
+    authApi.updateProfile({ preferredLanguage: langId }).catch(() => undefined);
+  }, []);
 
-  const updateProfile = useCallback(
-    (patch: Partial<Pick<User, 'name' | 'username'>>) => {
-      if (!user) return { ok: false, error: 'Not signed in.' };
-      const nextUsername = patch.username?.trim();
-      if (nextUsername && nextUsername.toLowerCase() !== user.username.toLowerCase()) {
-        if (usersStore.findByUsername(nextUsername)) {
-          return { ok: false, error: 'That username is already taken.' };
-        }
-      }
-      persist({
-        ...user,
-        name: patch.name?.trim() || user.name,
-        username: nextUsername || user.username,
-      });
+  const updateProfile = useCallback(async (patch: { name?: string; username?: string }): Promise<Result> => {
+    try {
+      const { user } = await authApi.updateProfile(patch);
+      setUser(user);
       return { ok: true };
-    },
-    [user, persist],
-  );
+    } catch (e) {
+      return { ok: false, error: errMsg(e, 'Update failed.') };
+    }
+  }, []);
 
-  const changePassword = useCallback(
-    (current: string, next: string) => {
-      if (!user) return { ok: false, error: 'Not signed in.' };
-      if (user.password !== current) return { ok: false, error: 'Current password is incorrect.' };
-      if (next.length < 4) return { ok: false, error: 'New password must be at least 4 characters.' };
-      persist({ ...user, password: next });
+  const changePassword = useCallback(async (current: string, next: string): Promise<Result> => {
+    try {
+      await authApi.changePassword({ current, next });
       return { ok: true };
-    },
-    [user, persist],
-  );
+    } catch (e) {
+      return { ok: false, error: errMsg(e, 'Could not change password.') };
+    }
+  }, []);
 
   const logActivity = useCallback(
     (item: Omit<HistoryItem, 'id' | 'timestamp'>) => {
-      if (!user) return;
-      historyStore.add(user.id, item);
+      if (user) historyStore.add(user.id, item);
     },
     [user],
   );
@@ -160,7 +148,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
-/** Access the app/auth context. */
 export function useApp(): AppContextValue {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useApp must be used within <AppProvider>');

@@ -136,8 +136,8 @@ export default function Settings() {
             Cancel
           </button>
           <button
-            onClick={() => {
-              deleteAccount();
+            onClick={async () => {
+              await deleteAccount();
               navigate('/onboarding');
             }}
             className="flex-1 rounded-2xl bg-red-500 py-3 font-semibold text-white transition active:scale-[0.98]"
@@ -194,7 +194,7 @@ function EditProfile({
 }: {
   initialName: string;
   initialUsername: string;
-  onSave: (patch: { name?: string; username?: string }) => { ok: boolean; error?: string };
+  onSave: (patch: { name?: string; username?: string }) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [name, setName] = useState(initialName);
   const [username, setUsername] = useState(initialUsername);
@@ -219,8 +219,8 @@ function EditProfile({
         <p className={cn('text-sm', msg.ok ? 'text-brandgreen' : 'text-red-300')}>{msg.text}</p>
       )}
       <button
-        onClick={() => {
-          const res = onSave({ name, username });
+        onClick={async () => {
+          const res = await onSave({ name, username });
           setMsg({ ok: res.ok, text: res.ok ? 'Profile updated.' : res.error ?? 'Failed.' });
         }}
         className="btn-primary w-full"
@@ -234,7 +234,7 @@ function EditProfile({
 function ChangePassword({
   onChange,
 }: {
-  onChange: (current: string, next: string) => { ok: boolean; error?: string };
+  onChange: (current: string, next: string) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -264,8 +264,8 @@ function ChangePassword({
         <p className={cn('text-sm', msg.ok ? 'text-brandgreen' : 'text-red-300')}>{msg.text}</p>
       )}
       <button
-        onClick={() => {
-          const res = onChange(current, next);
+        onClick={async () => {
+          const res = await onChange(current, next);
           setMsg({ ok: res.ok, text: res.ok ? 'Password changed.' : res.error ?? 'Failed.' });
           if (res.ok) {
             setCurrent('');

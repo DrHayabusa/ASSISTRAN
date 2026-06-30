@@ -101,3 +101,97 @@ export async function checkBackendHealth(): Promise<boolean> {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Auth + meetings (server-backed; JWT in localStorage)
+// ---------------------------------------------------------------------------
+
+const TOKEN_KEY = 'assistran_token';
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export interface PublicUser {
+  id: string;
+  name: string;
+  username: string;
+  preferredLanguage: string;
+}
+
+export interface Meeting {
+  id: string;
+  code: string;
+  title: string;
+  hostUserId: string;
+  status: 'scheduled' | 'live' | 'ended';
+  scheduledFor: number | null;
+  createdAt: number;
+}
+
+export interface JoinResult {
+  meeting: Meeting;
+  self: { id: string; displayName: string; preferredLanguage: string; role: 'host' | 'participant' };
+  /** null when LiveKit isn't configured — transcript/chat still work. */
+  livekit: { url: string; token: string; room: string } | null;
+}
+
+/** Authenticated JSON request with friendly error mapping. */
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  let res: Response;
+  try {
+    res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  } catch {
+    throw new Error('Cannot reach the ASSISTRAN backend. Make sure it is running (npm run dev).');
+  }
+
+  const raw = await res.text();
+  let payload: { error?: string } & Record<string, unknown> = {};
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      /* non-JSON */
+    }
+  }
+  if (!res.ok) {
+    if (payload.error) throw new Error(payload.error);
+    if (res.status === 404 || res.status === 405) {
+      throw new Error(`API not reachable (HTTP ${res.status}). Is the backend running behind /api?`);
+    }
+    throw new Error(`Request failed (HTTP ${res.status}).`);
+  }
+  return payload as T;
+}
+
+export const authApi = {
+  signup: (b: { name: string; username: string; password: string }) =>
+    request<{ token: string; user: PublicUser }>('POST', '/api/auth/signup', b),
+  login: (b: { username: string; password: string }) =>
+    request<{ token: string; user: PublicUser }>('POST', '/api/auth/login', b),
+  me: () => request<{ user: PublicUser }>('GET', '/api/auth/me'),
+  updateProfile: (b: { name?: string; username?: string; preferredLanguage?: string }) =>
+    request<{ user: PublicUser }>('PATCH', '/api/auth/profile', b),
+  changePassword: (b: { current: string; next: string }) =>
+    request<{ ok: boolean }>('POST', '/api/auth/password', b),
+  deleteAccount: () => request<{ ok: boolean }>('DELETE', '/api/auth/account'),
+};
+
+export const meetingApi = {
+  create: (b: { title: string; scheduledFor?: number | null }) =>
+    request<{ meeting: Meeting }>('POST', '/api/meetings', b),
+  get: (code: string) => request<{ meeting: Meeting }>('GET', `/api/meetings/${encodeURIComponent(code)}`),
+  join: (code: string, b: { displayName: string; preferredLanguage: string }) =>
+    request<JoinResult>('POST', `/api/meetings/${encodeURIComponent(code)}/join`, b),
+  end: (code: string) => request<{ ok: boolean }>('POST', `/api/meetings/${encodeURIComponent(code)}/end`),
+};

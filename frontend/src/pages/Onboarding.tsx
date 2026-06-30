@@ -13,27 +13,36 @@ export default function Onboarding() {
   const { login, signup } = useApp();
   const [mode, setMode] = useState<Mode>('login');
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (mode === 'login') {
-      const res = login(username, password);
-      if (!res.ok) return setError(res.error ?? 'Login failed.');
-      // Existing users may already have a language; the guard routes correctly.
-      navigate('/home');
-    } else {
+    if (mode === 'signup') {
       if (password !== confirm) return setError('Passwords do not match.');
       if (password.length < 4) return setError('Password must be at least 4 characters.');
-      const res = signup({ name, username, password });
-      if (!res.ok) return setError(res.error ?? 'Could not create account.');
-      navigate('/language');
+    }
+
+    setBusy(true);
+    try {
+      if (mode === 'login') {
+        const res = await login(username, password);
+        if (!res.ok) return setError(res.error ?? 'Login failed.');
+        // Existing users may already have a language; the guard routes correctly.
+        navigate('/home');
+      } else {
+        const res = await signup({ name, username, password });
+        if (!res.ok) return setError(res.error ?? 'Could not create account.');
+        navigate('/language');
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -130,8 +139,9 @@ export default function Onboarding() {
           </div>
         )}
 
-        <button type="submit" className="btn-primary mt-2">
-          {mode === 'login' ? 'Login' : 'Create account'} <ArrowRight size={18} />
+        <button type="submit" disabled={busy} className="btn-primary mt-2">
+          {busy ? 'Please wait…' : mode === 'login' ? 'Login' : 'Create account'}
+          {!busy && <ArrowRight size={18} />}
         </button>
       </form>
 

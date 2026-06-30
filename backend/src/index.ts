@@ -1,4 +1,6 @@
 import http from 'http';
+import path from 'path';
+import fs from 'fs';
 import express from 'express';
 import cors from 'cors';
 import { config, livekitEnabled } from './config';
@@ -53,6 +55,18 @@ app.use('/api', meetingsRouter); // /api/meetings*
 app.use('/api', translateRouter); // /api/translate
 app.use('/api', replyRouter); // /api/reply
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
+
+// In production, serve the built frontend from this same origin so the SPA,
+// /api and /socket.io all sit behind one HTTPS host (no CORS, no mixed content).
+const distDir = process.env.FRONTEND_DIST || path.resolve(process.cwd(), '../frontend/dist');
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
+  console.log(`[static] serving frontend from ${distDir}`);
+}
 
 const server = http.createServer(app);
 initRealtime(server); // attach Socket.IO to the same HTTP server

@@ -1,0 +1,23 @@
+# Self-signed TLS for a public IP (no domain yet). The browser will warn once
+# per origin — accept it for BOTH https://<IP> and https://<IP>:7443.
+#
+# When you later move to a domain, delete the `tls` lines and the `auto_https off`
+# global option and Caddy will obtain real Let's Encrypt certificates automatically.
+
+{
+	auto_https off
+}
+
+# The app: SPA + /api + /socket.io (WebSocket upgrade is automatic in Caddy).
+:443 {
+	tls /certs/assistran.crt /certs/assistran.key
+	encode gzip
+	reverse_proxy app:3000
+}
+
+# LiveKit signaling (WSS -> ws). Media (UDP/TURN) bypasses Caddy and uses the
+# ports exposed by the livekit container directly.
+:7443 {
+	tls /certs/assistran.crt /certs/assistran.key
+	reverse_proxy livekit:7880
+}

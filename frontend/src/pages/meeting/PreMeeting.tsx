@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { LanguageDropdown } from '../../components/ui/LanguageDropdown';
 import { Avatar } from '../../components/ui/Avatar';
 import { useApp } from '../../context/AppContext';
+import { meetingApi } from '../../lib/api';
 import { cn, colorFor } from '../../lib/utils';
 
 interface SetupState {
@@ -25,6 +26,8 @@ export default function PreMeeting() {
   const [camOn, setCamOn] = useState(true);
   const [micOn, setMicOn] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -69,19 +72,19 @@ export default function PreMeeting() {
     };
   }, [camOn, micOn]);
 
-  function join() {
-    // Release the preview stream; the room re-acquires fresh devices.
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    navigate(`/meeting/${code}/room`, {
-      state: {
-        title: state.title || 'ASSISTRAN Meeting',
-        isHost: state.isHost ?? false,
-        name: name.trim() || 'Guest',
-        lang,
-        camera: camOn,
-        mic: micOn,
-      },
-    });
+  async function join() {
+    setJoinError(null);
+    setJoining(true);
+    try {
+      // Register with the server and get a LiveKit token (when A/V is enabled).
+      const result = await meetingApi.join(code, { displayName: name.trim() || 'Guest', preferredLanguage: lang });
+      // Release the preview stream; the room acquires fresh devices via LiveKit.
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      navigate(`/meeting/${code}/room`, { state: { join: result, camera: camOn, mic: micOn } });
+    } catch (e) {
+      setJoinError(e instanceof Error ? e.message : 'Could not join the meeting.');
+      setJoining(false);
+    }
   }
 
   return (
@@ -132,8 +135,15 @@ export default function PreMeeting() {
         <LanguageDropdown value={lang} onChange={setLang} compact />
       </div>
 
-      <button onClick={join} className="btn-primary mt-auto w-full">
-        <LogIn size={18} /> Join meeting
+      {joinError && (
+        <div className="mb-3 flex items-center gap-2 rounded-xl bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
+          <AlertCircle size={16} className="shrink-0" />
+          {joinError}
+        </div>
+      )}
+
+      <button onClick={join} disabled={joining} className="btn-primary mt-auto w-full">
+        <LogIn size={18} /> {joining ? 'Joining…' : 'Join meeting'}
       </button>
     </div>
   );
