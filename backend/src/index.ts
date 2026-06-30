@@ -1,64 +1,84 @@
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
-import { config } from './config';
+import { config, livekitEnabled } from './config';
 import translateRouter from './routes/translate';
 import replyRouter from './routes/reply';
+import authRouter from './routes/auth';
+import meetingsRouter from './routes/meetings';
 import { getActiveModel, initModel, listInstalledModels, listModels } from './services/ollama';
+import { pingDb } from './db/pool';
+import { migrate } from './db/migrate';
+import { initRealtime } from './realtime/socket';
 
 const app = express();
 
-// Allow the Vite dev server (and any local origin) to call the API directly.
-// In normal use the frontend proxies /api through Vite, so CORS is just a safety net.
+// Behind the reverse proxy the frontend is same-origin; CORS is a dev safety net.
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-// Liveness + setup check. Confirms the backend is up, whether it can reach the
-// Ollama server, and which model will actually be used — handy for friends
-// verifying their setup.
+// Liveness + full setup check (DB, Ollama, LiveKit). Probes run in parallel and
+// are bounded so the endpoint stays fast even when a dependency is down.
 app.get('/api/health', async (_req, res) => {
-  let ollamaReachable = false;
-  let installedModels: string[] = [];
-  try {
-    installedModels = await listInstalledModels(3000); // keep health fast
-    ollamaReachable = true;
-  } catch {
-    ollamaReachable = false;
-  }
+  const [dbReachable, installedModels] = await Promise.all([
+    pingDb().then(() => true).catch(() => false),
+    listInstalledModels(3000).catch(() => [] as string[]),
+  ]);
   res.json({
     status: 'ok',
-    ollamaUrl: config.ollamaUrl,
-    ollamaReachable,
-    configuredModel: config.modelName,
-    activeModel: getActiveModel(),
-    installedModels,
+    db: { reachable: dbReachable },
+    ollama: {
+      url: config.ollamaUrl,
+      reachable: installedModels.length > 0,
+      configuredModel: config.modelName,
+      activeModel: getActiveModel(),
+      installedModels,
+    },
+    livekit: { configured: livekitEnabled(), url: config.livekit.url || null },
   });
 });
 
-// Diagnostic route: confirms the backend can reach Ollama and lists models.
+// Diagnostic: list models straight from Ollama.
 app.get('/api/models', async (_req, res) => {
   try {
-    const data = await listModels();
-    res.json(data);
+    res.json(await listModels());
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     res.status(502).json({ error: `Could not reach Ollama at ${config.ollamaUrl}: ${message}` });
   }
 });
 
-// Translation API.
-app.use('/api', translateRouter);
-
-// Conversational replies for simulated chat/meeting participants.
-app.use('/api', replyRouter);
-
-// 404 for any other /api/* path.
+app.use('/api', authRouter); // /api/auth/*
+app.use('/api', meetingsRouter); // /api/meetings*
+app.use('/api', translateRouter); // /api/translate
+app.use('/api', replyRouter); // /api/reply
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
-app.listen(config.port, () => {
-  console.log(`\n  ASSISTRAN backend running at http://localhost:${config.port}`);
-  console.log(`  Translate endpoint:  POST http://localhost:${config.port}/api/translate`);
-  console.log(`  Ollama target:       ${config.ollamaUrl}`);
-  console.log(`  Configured model:    ${config.modelName}`);
-  // Check the Ollama server and pick a usable model (logs a fallback if needed).
-  void initModel();
-});
+const server = http.createServer(app);
+initRealtime(server); // attach Socket.IO to the same HTTP server
+
+async function start() {
+  try {
+    await pingDb();
+    await migrate();
+    console.log('[db] connected and schema ready');
+  } catch (e) {
+    console.error(`[db] NOT available: ${(e as Error).message}`);
+    console.error('     Auth and meetings require MariaDB — set DB_* in .env and start the database.');
+    console.error('     Translation (/api/translate) still works without it.');
+  }
+
+  if (config.jwtSecret === 'dev-insecure-change-me') {
+    console.warn('[auth] Using the default JWT secret — set JWT_SECRET in .env before sharing this server.');
+  }
+
+  server.listen(config.port, () => {
+    console.log(`\n  ASSISTRAN backend running at http://localhost:${config.port}`);
+    console.log(`  Ollama:   ${config.ollamaUrl} (model ${config.modelName})`);
+    console.log(`  LiveKit:  ${livekitEnabled() ? config.livekit.url : 'not configured (A/V disabled)'}`);
+    console.log(`  Realtime: Socket.IO on /socket.io\n`);
+    void initModel();
+  });
+}
+
+void start();
