@@ -6,7 +6,7 @@ DB_NAME="${DB_NAME:-assistran}"
 DB_USER="${DB_USER:-assistran}"
 DB_PASSWORD="${DB_PASSWORD:-assistran}"
 
-mkdir -p /run/mysqld /etc/mysql
+mkdir -p /run/mysqld /etc/mysql /var/lib/mysql
 chown -R mysql:mysql /run/mysqld /var/lib/mysql
 
 # Initialize the data directory on first run (e.g. a fresh/empty volume).
