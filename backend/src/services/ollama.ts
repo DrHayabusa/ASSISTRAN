@@ -263,7 +263,7 @@ async function chatComplete(messages: ChatTurn[], options: Record<string, unknow
     throw new Error(
       installed.length
         ? `Model "${config.modelName}" is not installed on the Ollama server. Installed: ${installed.join(', ')}. Set MODEL_NAME in .env to one of these (or run "ollama pull ${config.modelName}").`
-        : `No models are installed on the Ollama server at ${config.ollamaUrl}. Pull one first, e.g. "ollama pull qwen2.5:14b-instruct", then set MODEL_NAME in .env.`,
+        : `No models are installed on the Ollama server at ${config.ollamaUrl}. Pull one first, e.g. "ollama pull qwen2.5-coder:32b", then set MODEL_NAME in .env.`,
     );
   }
 }

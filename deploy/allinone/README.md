@@ -28,7 +28,7 @@ docker run -d --name assistran -p 8080:3000 \
   -e JWT_SECRET="$(openssl rand -hex 32)" \
   -e DB_PASSWORD="$(openssl rand -hex 16)" \
   -e OLLAMA_URL="http://YOUR_OLLAMA_HOST:11434" \
-  -e MODEL_NAME="qwen2.5:14b-instruct" \
+  -e MODEL_NAME="qwen2.5-coder:32b" \
   -v assistran-db:/var/lib/mysql \
   assistran:allinone
 ```

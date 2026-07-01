@@ -72,7 +72,7 @@ Backend (Node + Express + TS) ── MariaDB (users, meetings, chat)
 
 ### Prerequisites
 - **Node.js 18+** (tested on Node 22) and npm.
-- Network access to an **Ollama** server with a chat model pulled (e.g. `qwen2.5:14b-instruct`).
+- Network access to an **Ollama** server with the model pulled (`qwen2.5-coder:32b`).
 - A **MariaDB** (or MySQL) database — accounts and meetings are server-backed. Quick start:
   ```bash
   docker run -d --name assistran-db -p 3306:3306 \
@@ -97,7 +97,7 @@ cp .env.example .env
 `.env` (read by the **backend only**) — key settings:
 ```env
 OLLAMA_URL=http://46.152.253.223:11434
-MODEL_NAME=qwen2.5:14b-instruct
+MODEL_NAME=qwen2.5-coder:32b
 
 DB_HOST=127.0.0.1
 DB_PORT=3306
@@ -202,8 +202,8 @@ curl http://localhost:3000/api/health
   "status": "ok",
   "ollamaReachable": true,            // can the backend reach your Ollama server?
   "configuredModel": "qwen2.5-coder:32b",
-  "activeModel": "qwen2.5:14b-instruct", // the model actually being used
-  "installedModels": ["qwen2.5:14b-instruct", "..."]  // what your server has
+  "activeModel": "qwen2.5-coder:32b",  // the model actually being used
+  "installedModels": ["qwen2.5-coder:32b", "..."]  // what your server has
 }
 ```
 If `ollamaReachable` is `false`, the backend can't reach Ollama (URL/firewall/VPN). If
@@ -220,7 +220,7 @@ runs the app can **reach a working Ollama**. The cleanest, error-free way for a 
 1. Install **Node 18+** and **[Ollama](https://ollama.com)**.
 2. Pull a model and start Ollama:
    ```bash
-   ollama pull qwen2.5:14b-instruct   # good quality/speed; or qwen2.5:7b-instruct for low-end PCs
+   ollama pull qwen2.5-coder:32b      # the model ASSISTRAN uses by default
    ollama serve                       # (usually already running on http://localhost:11434)
    ```
 3. Clone and configure:
@@ -232,7 +232,7 @@ runs the app can **reach a working Ollama**. The cleanest, error-free way for a 
    Edit `.env` so it points at their **own** Ollama:
    ```env
    OLLAMA_URL=http://localhost:11434
-   MODEL_NAME=qwen2.5:14b-instruct
+   MODEL_NAME=qwen2.5-coder:32b
    ```
 4. Run it:
    ```bash
@@ -248,7 +248,7 @@ This "just works" with no 404/405/500/502 because everything is local. Mic/camer
 Keep `OLLAMA_URL` pointing at your server (e.g. `http://46.152.253.223:11434`). For this to work:
 - Your Ollama server must be **reachable from the friend's network** (public IP/port, port-forwarded,
   or a tunnel like `ngrok http 11434`). Verify from *their* machine: `curl http://YOUR_IP:11434/api/tags`.
-- That server must have a **chat model installed** (run `ollama pull qwen2.5:14b-instruct` on it). The
+- That server must have a **chat model installed** (run `ollama pull qwen2.5-coder:32b` on it). The
   app auto-falls-back to any installed chat model, but it must have at least one.
 
 > Mic/camera need a secure origin. Each person running their own copy on `localhost` is fine. If you

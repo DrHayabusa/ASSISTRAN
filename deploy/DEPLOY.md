@@ -15,8 +15,8 @@ Browser ──HTTPS(:443)──> Caddy ──> app (Express: SPA + /api + /socke
 
 ## 1. Prerequisites
 - A host with **Docker + Docker Compose v2** and a reachable **public IP**.
-- An **Ollama** server reachable from the host, with a chat model pulled
-  (e.g. `ollama pull qwen2.5:14b-instruct`).
+- An **Ollama** server reachable from the host, with the model pulled
+  (`ollama pull qwen2.5-coder:32b`).
 - Firewall open for: **443/tcp**, **7443/tcp**, **7881/tcp**, **3478/udp**, **50000-50100/udp**.
 
 ## 2. Configure environment (`../.env`)
